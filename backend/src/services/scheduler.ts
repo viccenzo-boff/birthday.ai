@@ -40,10 +40,12 @@ export async function verificarEEnviarAniversarios(whatsappClient: any) {
             return;
         }
 
-        console.log(`🎉 Encontrado(s) ${aniversariantesDoDia.length} aniversariante(s) hoje!`);
+        console.log(`🎉 Encontrado(s) ${aniversariantesDoDia.length} aniversariante(s) hoje! Iniciando disparos...`);
 
-        // Dispara as mensagens
-        for (const pessoa of aniversariantesDoDia) {
+        // Dispara as mensagens com pausa inteligente
+        for (let i = 0; i < aniversariantesDoDia.length; i++) {
+            const pessoa = aniversariantesDoDia[i];
+            
             // Usa o apelido se existir, senão usa o nome completo
             const nomeTratado = pessoa.apelido || pessoa.nome;
             
@@ -60,11 +62,17 @@ export async function verificarEEnviarAniversarios(whatsappClient: any) {
                 }
             });
             
-            console.log(`✅ Mensagem enviada com sucesso para ${nomeTratado}`);
+            console.log(`✅ Mensagem enviada para ${nomeTratado} (${i + 1}/${aniversariantesDoDia.length})`);
             
-            // Pequeno atraso manual de 5 segundos entre mensagens se houver mais de um aniversariante
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            // Se NÃO for a última pessoa da lista, o sistema "dorme" por 10 minutos
+            if (i < aniversariantesDoDia.length - 1) {
+                console.log('⏳ Aguardando 10 minutos para enviar a próxima mensagem (Segurança Anti-Ban)...');
+                // 10 minutos * 60 segundos * 1000 milissegundos
+                await new Promise(resolve => setTimeout(resolve, 10 * 60 * 1000));
+            }
         }
+
+        console.log('🏁 Todos os aniversariantes de hoje foram parabenizados com sucesso!');
 
     } catch (error: any) {
         console.error('❌ Erro ao processar a rotina de aniversários:', error);
@@ -75,11 +83,12 @@ export async function verificarEEnviarAniversarios(whatsappClient: any) {
 export function iniciarAgendador(whatsappClient: any) {
     // Cron padrão: Roda todos os dias às 08:00 da manhã
     // Sintaxe: (Minuto) (Hora) (Dia do Mês) (Mês) (Dia da Semana)
-    cron.schedule('0 8 * * *', () => {
+    const task = cron.schedule('0 8 * * *', () => {
         verificarEEnviarAniversarios(whatsappClient);
     }, {
         timezone: "America/Sao_Paulo" // Garante o fuso horário correto de Brasília
     });
 
+    task.start();
     console.log('⏰ Despertador diário programado para às 08:00.');
 }
