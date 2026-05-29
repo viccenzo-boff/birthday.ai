@@ -1,45 +1,20 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
-
-type PendingMessage = {
-  id: string;
-  name: string;
-  date: string;
-  message: string;
-  originalMessage: string;
-  createdAtTime: string; // Novo campo para o horário de chegada
-};
-
-type HistoryStatus = "Enviado" | "Editado e Enviado" | "Reprovado";
-
-type HistoryItem = {
-  id: string;
-  name: string;
-  date: string;
-  originalMessage: string;
-  finalMessage: string;
-  status: HistoryStatus;
-  createdAtTime: string; // Novo campo para o horário de chegada
-  actionTime: string;    // Novo campo para o horário da ação (aprovação/reprovação)
-};
-
-const statusStyles: Record<HistoryStatus, string> = {
-  Enviado: "bg-emerald-100 text-emerald-700 ring-emerald-200",
-  "Editado e Enviado": "bg-sky-100 text-sky-700 ring-sky-200",
-  Reprovado: "bg-rose-100 text-rose-700 ring-rose-200",
-};
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { EmptyState } from "./components/EmptyState";
+import { HistoryCard } from "./components/HistoryCard";
+import { Metric } from "./components/Metric";
+import { PendingCard } from "./components/PendingCard";
+import { approveMessage, editMessage, fetchMessages, rejectMessage } from "./lib/api";
+import {
+  convertBrazilianDateToInputDate,
+  isHistoryItem,
+  isPendingMessage,
+  toDashboardMessage,
+} from "./lib/messages";
+import type { HistoryItem, PendingMessage } from "./types/messages";
 
 const itemsPerPageOptions = [5, 10, 25];
-
-// Função auxiliar para extrair apenas as horas e minutos (Ex: "08:00")
-function extractTime(dateString?: string) {
-  if (!dateString) return "--:--";
-  return new Date(dateString).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 export default function Home() {
   const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
@@ -51,49 +26,30 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(5);
 
-  const carregarMensagens = () => {
-    fetch("http://localhost:3333/api/mensagens")
-      .then((response) => response.json())
-      .then((data) => {
-        const mensagensFormatadas = data.map((item: any) => {
-          let visualStatus = item.status;
-          if (item.status === "ENVIADO" || item.status === "SUCESSO") visualStatus = "Enviado";
-          if (item.status === "EDITADO" || item.status === "EDITADO_E_ENVIADO") visualStatus = "Editado e Enviado";
-          if (item.status === "REPROVADO") visualStatus = "Reprovado";
+  const loadMessages = useCallback(async () => {
+    try {
+      const messages = await fetchMessages();
+      const dashboardMessages = messages.map(toDashboardMessage);
 
-          return {
-            id: item.id,
-            name: item.aniversariante?.nome || item.aniversariante?.apelido || "Sem Nome",
-            date: item.aniversariante?.data_nascimento
-              ? new Date(item.aniversariante.data_nascimento).toLocaleDateString("pt-BR", { timeZone: "UTC" })
-              : "00/00/0000",
-            originalMessage: item.mensagemOriginal || "",
-            message: item.mensagemEditada || item.mensagemOriginal || "",
-            finalMessage: item.mensagemEditada || item.mensagemOriginal || "",
-            status: visualStatus,
-            // Captura as datas de criação e atualização que vêm do banco de dados
-            createdAtTime: extractTime(item.createdAt || item.dataCriacao),
-            actionTime: extractTime(item.updatedAt || item.dataAtualizacao),
-          };
-        });
-
-        const filaPendentes = mensagensFormatadas.filter((msg: any) => msg.status === "PENDENTE");
-        setPendingMessages(filaPendentes);
-
-        const filaHistorico = mensagensFormatadas.filter((msg: any) => msg.status !== "PENDENTE");
-        setHistory(filaHistorico);
-      })
-      .catch((error) => console.error("❌ Erro ao carregar mensagens reais:", error));
-  };
+      setPendingMessages(dashboardMessages.filter(isPendingMessage));
+      setHistory(dashboardMessages.filter(isHistoryItem));
+    } catch (error) {
+      console.error("Erro ao carregar mensagens:", error);
+    }
+  }, []);
 
   useEffect(() => {
-    carregarMensagens();
-  }, []);
+    const timeoutId = window.setTimeout(() => {
+      void loadMessages();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadMessages]);
 
   const handleApprove = async (id: string) => {
     try {
-      await fetch(`http://localhost:3333/api/mensagens/${id}/aprovar`, { method: "POST" });
-      carregarMensagens();
+      await approveMessage(id);
+      await loadMessages();
     } catch (error) {
       console.error("Erro ao aprovar:", error);
     }
@@ -101,39 +57,32 @@ export default function Home() {
 
   const handleReject = async (id: string) => {
     try {
-      await fetch(`http://localhost:3333/api/mensagens/${id}/reprovar`, { method: "POST" });
-      carregarMensagens();
+      await rejectMessage(id);
+      await loadMessages();
     } catch (error) {
       console.error("Erro ao reprovar:", error);
     }
   };
 
   const handleSaveEdit = async () => {
-    if (editingId && draftMessage.trim()) {
-      try {
-        await fetch(`http://localhost:3333/api/mensagens/${editingId}/editar`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ novoTexto: draftMessage }),
-        });
-        setEditingId(null);
-        setDraftMessage("");
-        carregarMensagens();
-      } catch (error) {
-        console.error("Erro ao editar:", error);
-      }
+    if (!editingId || !draftMessage.trim()) return;
+
+    try {
+      await editMessage(editingId, draftMessage);
+      setEditingId(null);
+      setDraftMessage("");
+      await loadMessages();
+    } catch (error) {
+      console.error("Erro ao editar:", error);
     }
   };
 
   const approveAllPending = async () => {
     if (pendingMessages.length === 0) return;
+
     try {
-      await Promise.all(
-        pendingMessages.map((msg) =>
-          fetch(`http://localhost:3333/api/mensagens/${msg.id}/aprovar`, { method: "POST" })
-        )
-      );
-      carregarMensagens();
+      await Promise.all(pendingMessages.map((message) => approveMessage(message.id)));
+      await loadMessages();
     } catch (error) {
       console.error("Erro ao aprovar todos:", error);
     }
@@ -162,11 +111,13 @@ export default function Home() {
 
   const filteredHistory = useMemo(() => {
     const normalizedSearch = historySearch.trim().toLowerCase();
+
     return history.filter((item) => {
       const matchesName = item.name.toLowerCase().includes(normalizedSearch);
       const matchesDate = historyDate
         ? convertBrazilianDateToInputDate(item.date) === historyDate
         : true;
+
       return matchesName && matchesDate;
     });
   }, [history, historyDate, historySearch]);
@@ -359,173 +310,4 @@ export default function Home() {
       </div>
     </main>
   );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-slate-950">{value}</p>
-    </div>
-  );
-}
-
-function PendingCard({
-  item,
-  isEditing,
-  draftMessage,
-  onDraftChange,
-  onApprove,
-  onEdit,
-  onReject,
-  onSaveEdit,
-  onCancelEdit,
-}: {
-  item: PendingMessage;
-  isEditing: boolean;
-  draftMessage: string;
-  onDraftChange: (message: string) => void;
-  onApprove: () => void;
-  onEdit: () => void;
-  onReject: () => void;
-  onSaveEdit: () => void;
-  onCancelEdit: () => void;
-}) {
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-950">{item.name}</h3>
-          <p className="text-sm text-slate-500">
-            Aniversário em {item.date} • <span className="font-medium text-slate-400">Recebido às {item.createdAtTime}</span>
-          </p>
-        </div>
-        <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-200">
-          Pendente
-        </span>
-      </div>
-
-      <div className="mt-4 rounded-md bg-slate-50 p-4">
-        <p className="text-xs font-semibold uppercase text-slate-500">Mensagem gerada</p>
-        {isEditing ? (
-          <textarea
-            value={draftMessage}
-            onChange={(event) => onDraftChange(event.target.value)}
-            className="mt-3 min-h-32 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-900 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
-          />
-        ) : (
-          <p className="mt-2 text-sm leading-6 text-slate-700">{item.message}</p>
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-        {isEditing ? (
-          <>
-            <button
-              type="button"
-              onClick={onSaveEdit}
-              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md bg-sky-600 px-4 text-sm font-semibold text-white transition hover:bg-sky-700"
-            >
-              Salvar edição
-            </button>
-            <button
-              type="button"
-              onClick={onCancelEdit}
-              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Cancelar
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={onApprove}
-              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700"
-            >
-              Aprovar
-            </button>
-            <button
-              type="button"
-              onClick={onEdit}
-              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md bg-sky-600 px-4 text-sm font-semibold text-white transition hover:bg-sky-700"
-            >
-              Editar
-            </button>
-            <button
-              type="button"
-              onClick={onReject}
-              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700"
-            >
-              Reprovar
-            </button>
-          </>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function HistoryCard({ item }: { item: HistoryItem }) {
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="text-base font-semibold text-slate-950">{item.name}</h3>
-          <p className="text-sm text-slate-500">Aniversário em {item.date}</p>
-          <p className="mt-1 flex items-center gap-2 text-xs text-slate-400">
-            <span>Recebido às {item.createdAtTime}</span>
-            <span>•</span>
-            <span className="font-medium text-slate-500">Ação às {item.actionTime}</span>
-          </p>
-        </div>
-        <span
-          className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ring-1 ${statusStyles[item.status]}`}
-        >
-          {item.status}
-        </span>
-      </div>
-
-      {item.status === "Editado e Enviado" ? (
-        <div className="mt-4 grid gap-3">
-          <MessagePreview title="Original" text={item.originalMessage} muted />
-          <MessagePreview title="Nova mensagem" text={item.finalMessage} />
-        </div>
-      ) : (
-        <div className="mt-4">
-          <MessagePreview
-            title={item.status === "Reprovado" ? "Mensagem cancelada" : "Mensagem enviada"}
-            text={item.finalMessage}
-            muted={item.status === "Reprovado"}
-          />
-        </div>
-      )}
-    </article>
-  );
-}
-
-function MessagePreview({ title, text, muted = false }: { title: string; text: string; muted?: boolean }) {
-  return (
-    <div
-      className={`rounded-md border p-3 ${
-        muted ? "border-slate-200 bg-slate-50 text-slate-500" : "border-sky-100 bg-sky-50 text-slate-700"
-      }`}
-    >
-      <p className="text-xs font-semibold uppercase text-slate-500">{title}</p>
-      <p className="mt-2 text-sm leading-6">{text}</p>
-    </div>
-  );
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-medium text-slate-500">
-      {text}
-    </div>
-  );
-}
-
-function convertBrazilianDateToInputDate(date: string) {
-  const [day, month, year] = date.split("/");
-  return `${year}-${month}-${day}`;
 }

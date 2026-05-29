@@ -1,0 +1,28 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Aniversariante {
+  id              String     @id @default(uuid())
+  nome            String
+  apelido         String?
+  data_nascimento DateTime
+  ativo           Boolean    @default(true)
+  data_criacao    DateTime   @default(now())
+  logs            LogEnvio[]
+}
+
+model LogEnvio {
+  id                String         @id @default(uuid())
+  status            String         @default("PENDENTE")
+  mensagemOriginal  String         @db.Text
+  mensagemEditada   String?        @db.Text
+  dataCriacao       DateTime       @default(now())
+  dataAtualizacao   DateTime       @updatedAt
+  aniversarianteId  String
+  aniversariante    Aniversariante @relation(fields: [aniversarianteId], references: [id])
+}
