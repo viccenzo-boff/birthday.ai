@@ -11,7 +11,19 @@ function buildMessagesUrl(path = "") {
 }
 
 async function request<T>(path = "", init?: RequestInit): Promise<T> {
-  const response = await fetch(buildMessagesUrl(path), init);
+  // 1. Criamos um novo objeto de cabeçalhos baseado nos originais (caso existam)
+  const customHeaders = new Headers(init?.headers);
+  
+  // 2. Injetamos a "Chave Mestra" para ignorar a página de aviso do Ngrok
+  customHeaders.set("ngrok-skip-browser-warning", "true");
+
+  // 3. Montamos a configuração final do fetch
+  const customInit: RequestInit = {
+    ...init,
+    headers: customHeaders,
+  };
+
+  const response = await fetch(buildMessagesUrl(path), customInit);
 
   if (!response.ok) {
     throw new Error(`Request failed with status ${response.status}`);
