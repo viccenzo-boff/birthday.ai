@@ -9,11 +9,16 @@ import { logger } from './lib/logger';
 const app = express();
 const client = createWhatsAppClient();
 const port = Number(process.env.PORT ?? 3333);
-const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000';
 
 logger.info('Iniciando Servidor Birthday.ai...');
 
-app.use(cors({ origin: frontendOrigin }));
+// Configuração atualizada do CORS para permitir o Ngrok e a Vercel
+app.use(cors({
+  origin: '*', 
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
+}));
+
 app.use(express.json());
 app.use('/api/mensagens', createMessagesRouter(client));
 
