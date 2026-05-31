@@ -4,8 +4,6 @@ import type { Client } from 'whatsapp-web.js';
 import { handleRouteError } from '../lib/http';
 import { prisma } from '../lib/prisma';
 
-const TARGET_GROUP_ID = '554991429722-1635872850@g.us';
-
 interface MessageParams {
   id: string;
 }
@@ -43,7 +41,16 @@ export function createMessagesRouter(client: Client) {
       const textoFinal = log.mensagemEditada || log.mensagemOriginal;
       const statusFinal = log.mensagemEditada ? 'EDITADO_E_ENVIADO' : 'ENVIADO';
 
-      await client.sendMessage(TARGET_GROUP_ID, textoFinal);
+      // Puxando o ID dinamicamente do .env
+      const groupId = process.env.WHATSAPP_GROUP_ID;
+
+      // Trava de segurança: se esquecer de colocar no .env no futuro, o servidor avisa em vez de quebrar silenciosamente
+      if (!groupId) {
+        throw new Error('ID do grupo do WhatsApp não configurado no .env');
+      }
+
+      // Enviando para a variável dinâmica
+      await client.sendMessage(groupId, textoFinal);
 
       await prisma.logEnvio.update({
         where: { id },

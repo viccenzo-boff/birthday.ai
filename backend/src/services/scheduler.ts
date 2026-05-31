@@ -25,6 +25,11 @@ export async function verificarEEnviarAniversarios() {
     const hoje = new Date();
     const diaAtual = hoje.getDate();
     const mesAtual = hoje.getMonth() + 1;
+    const inicioDoDia = new Date(hoje);
+    inicioDoDia.setHours(0, 0, 0, 0);
+
+    const fimDoDia = new Date(hoje);
+    fimDoDia.setHours(23, 59, 59, 999);
 
     const aniversariantes = await prisma.aniversariante.findMany({
       where: { ativo: true },
@@ -42,9 +47,22 @@ export async function verificarEEnviarAniversarios() {
       return;
     }
 
-    const model = getGeminiModel();
-
     for (const pessoa of aniversariantesDoDia) {
+      const logExistenteHoje = await prisma.logEnvio.findFirst({
+        where: {
+          aniversarianteId: pessoa.id,
+          dataCriacao: {
+            gte: inicioDoDia,
+            lte: fimDoDia,
+          },
+        },
+      });
+
+      if (logExistenteHoje) {
+        continue;
+      }
+
+      const model = getGeminiModel();
       const nomeFinal = pessoa.apelido || pessoa.nome;
       const prompt = `Escreva uma mensagem de feliz aniversário curta, amigável e respeitosa para ${nomeFinal}. 
             
