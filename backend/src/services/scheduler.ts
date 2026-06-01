@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import cron from 'node-cron';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { Client } from 'whatsapp-web.js';
 import { logger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 
@@ -8,20 +9,14 @@ let genAI: GoogleGenerativeAI | null = null;
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY nao configurada.');
-  }
-
-  if (!genAI) {
-    genAI = new GoogleGenerativeAI(apiKey);
-  }
-
+  if (!apiKey) throw new Error('GEMINI_API_KEY nao configurada.');
+  if (!genAI) genAI = new GoogleGenerativeAI(apiKey);
   return genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 }
 
-export async function verificarEEnviarAniversarios() {
+export async function verificarEEnviarAniversarios(client?: Client) {
   try {
+    logger.info('Iniciando varredura de aniversariantes do dia...');
     const hoje = new Date();
     const diaAtual = hoje.getDate();
     const mesAtual = hoje.getMonth() + 1;
@@ -34,40 +29,37 @@ export async function verificarEEnviarAniversarios() {
       const dataNasc = new Date(pessoa.data_nascimento);
       const diaNasc = dataNasc.getUTCDate();
       const mesNasc = dataNasc.getUTCMonth() + 1;
-
       return diaNasc === diaAtual && mesNasc === mesAtual;
     });
 
-    if (aniversariantesDoDia.length === 0) {
-      return;
-    }
+    logger.info(`Foram encontrados ${aniversariantesDoDia.length} aniversariante(s) para hoje.`);
+
+    if (aniversariantesDoDia.length === 0) return;
+
+    const model = getGeminiModel();
+    let novasMensagens = 0;
 
     for (const pessoa of aniversariantesDoDia) {
-      const dataDeHoje = new Date();
-      const inicioDoDia = new Date(dataDeHoje);
+      const inicioDoDia = new Date();
       inicioDoDia.setHours(0, 0, 0, 0);
-
-      const fimDoDia = new Date(dataDeHoje);
+      const fimDoDia = new Date();
       fimDoDia.setHours(23, 59, 59, 999);
 
-      const logExistenteHoje = await prisma.logEnvio.findFirst({
+      const logJaExiste = await prisma.logEnvio.findFirst({
         where: {
           aniversarianteId: pessoa.id,
-          dataCriacao: {
-            gte: inicioDoDia,
-            lte: fimDoDia,
-          },
+          dataCriacao: { gte: inicioDoDia, lte: fimDoDia },
         },
       });
 
-      if (logExistenteHoje) {
+      if (logJaExiste) {
+        logger.info(`[TRAVA] Mensagem já existe hoje para ID ${pessoa.id}. Pulando.`);
         continue;
       }
 
-      const model = getGeminiModel();
+      logger.info(`Gerando mensagem para o ID ${pessoa.id}...`);
       const nomeFinal = pessoa.apelido || pessoa.nome;
       const prompt = `Escreva uma mensagem de feliz aniversário curta, amigável e respeitosa para ${nomeFinal}. 
-            
 Instruções obrigatórias:
 1. A mensagem será enviada em um grupo de WhatsApp, mas NÃO utilize a palavra "comunidade".
 2. Utilize obrigatoriamente linguagem neutra (não utilize adjetivos com marcação de gênero, como "querido", "querida", "nosso" ou "nossa").
@@ -76,31 +68,32 @@ Instruções obrigatórias:
 5. A mensagem deve soar muito natural e humana, desejando felicidades de forma direta e educada.`;
 
       const result = await model.generateContent(prompt);
-      const mensagemGerada = result.response.text();
-
       await prisma.logEnvio.create({
         data: {
           aniversarianteId: pessoa.id,
-          mensagemOriginal: mensagemGerada,
+          mensagemOriginal: result.response.text(),
           status: 'PENDENTE',
         },
       });
+
+      novasMensagens++;
+      logger.info(`Mensagem gerada e salva com sucesso para ID ${pessoa.id}.`);
+    }
+
+    if (novasMensagens > 0 && client) {
+      const adminPhone = process.env.WHATSAPP_ADMIN_PHONE;
+      if (adminPhone) {
+        const msgAviso = `🚨 *Birthday.ai* 🚨\nVocê tem ${novasMensagens} nova(s) mensagem(ns) de aniversário pendente(s) para aprovar!\n\nAcesse o painel: https://birthday-ai-three.vercel.app`;
+        await client.sendMessage(adminPhone, msgAviso);
+        logger.info('Notificação enviada ao administrador.');
+      }
     }
   } catch (error) {
     logger.error('Erro ao gerar mensagens com IA', error);
   }
 }
 
-export function iniciarAgendador() {
-  cron.schedule(
-    '0 8 * * *',
-    () => {
-      void verificarEEnviarAniversarios();
-    },
-    {
-      timezone: 'America/Sao_Paulo',
-    }
-  );
-
+export function iniciarAgendador(client: Client) {
+  cron.schedule('0 8 * * *', () => { void verificarEEnviarAniversarios(client); }, { timezone: 'America/Sao_Paulo' });
   logger.info('Agendador diário programado para 08:00.');
 }

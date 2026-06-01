@@ -28,8 +28,8 @@ app.listen(port, () => {
 
 client.on('ready', () => {
   logger.info('WhatsApp conectado com sucesso.');
-  iniciarAgendador();
-  void verificarEEnviarAniversarios();
+  iniciarAgendador(client);
+  void verificarEEnviarAniversarios(client);
 });
 
 void client.initialize().catch((error: unknown) => {
