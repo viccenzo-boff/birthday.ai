@@ -94,6 +94,16 @@ Instruções obrigatórias:
 }
 
 export function iniciarAgendador(client: Client) {
-  cron.schedule('0 8 * * *', () => { void verificarEEnviarAniversarios(client); }, { timezone: 'America/Sao_Paulo' });
-  logger.info('Agendador diário programado para 08:00.');
+  // Executa a cada 5 minutos, começando às 08:00 até as 23:59
+  cron.schedule(
+    '*/5 8-23 * * *',
+    () => {
+      void verificarEEnviarAniversarios(client);
+    },
+    {
+      timezone: 'America/Sao_Paulo',
+    }
+  );
+
+  logger.info('Agendador programado para rodar a cada 5 min (das 08:00 às 23:59).');
 }
