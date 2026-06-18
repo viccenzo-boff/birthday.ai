@@ -15,7 +15,10 @@ export default function LoginPage() {
     });
 
     if (error) {
-      return redirect('/login?error=Credenciais inválidas');
+      console.log("🔥 ERRO REAL DO SUPABASE:", error);
+      
+      // Isso vai jogar a mensagem original do banco na sua URL
+      return redirect(`/login?error=${error.message}`);
     }
 
     // Se o login for bem-sucedido, redireciona para o painel principal
@@ -37,12 +40,12 @@ export default function LoginPage() {
           <label htmlFor="email" className="text-sm font-semibold text-slate-700">
             E-mail
           </label>
-          <input
+          <input 
             id="email"
             name="email"
             type="email"
             required
-            className="border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+            className="border border-slate-300 p-2.5 rounded-lg text-slate-900 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
             placeholder="Seu e-mail de administrador"
           />
         </div>
@@ -56,7 +59,7 @@ export default function LoginPage() {
             name="password"
             type="password"
             required
-            className="border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+            className="border border-slate-300 p-2.5 rounded-lg text-slate-900 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
             placeholder="Sua senha segura"
           />
         </div>
