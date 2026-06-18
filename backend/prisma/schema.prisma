@@ -17,12 +17,31 @@ model Aniversariante {
 }
 
 model LogEnvio {
-  id                String         @id @default(uuid())
-  status            String         @default("PENDENTE")
-  mensagemOriginal  String         @db.Text
-  mensagemEditada   String?        @db.Text
-  dataCriacao       DateTime       @default(now())
-  dataAtualizacao   DateTime       @updatedAt
-  aniversarianteId  String
-  aniversariante    Aniversariante @relation(fields: [aniversarianteId], references: [id])
+  id               String         @id @default(uuid())
+  status           String         @default("PENDENTE")
+  mensagemOriginal String         @db.Text
+  mensagemEditada  String?        @db.Text
+  dataCriacao      DateTime       @default(now())
+  dataAtualizacao  DateTime       @updatedAt
+  aniversarianteId String
+  aniversariante   Aniversariante @relation(fields: [aniversarianteId], references: [id])
+
+  // Relacionamento OBRIGATÓRIO com o Prompt
+  promptId         String
+  prompt           Prompt         @relation(fields: [promptId], references: [id])
+}
+
+model Prompt {
+  id          String     @id @default(uuid())
+  chave       String     // Identificador. Ex: "GERAR_ANIVERSARIO"
+  versao      Int        // Número sequencial. Ex: 1, 2, 3
+  conteudo    String     @db.Text // O texto do prompt em si
+  ativo       Boolean    @default(false)
+  criadoPor   String     // E-mail ou ID do usuário que criou a versão
+  criadoEm    DateTime   @default(now())
+
+  // Histórico de mensagens geradas por este prompt
+  logs        LogEnvio[] 
+
+  @@unique([chave, versao])
 }

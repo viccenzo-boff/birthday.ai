@@ -9,6 +9,7 @@ export default defineConfig({
     seed: "npx tsx prisma/seed.ts",
   },
   datasource: {
-    url: process.env["DIRECT_URL"],
+    // Tenta usar a DIRECT_URL primeiro (ideal para Supabase). Se não achar, usa a DATABASE_URL.
+    url: process.env.DIRECT_URL || process.env.DATABASE_URL,
   },
 });
