@@ -5,6 +5,7 @@ import { createMessagesRouter } from './routes/messages';
 import { iniciarAgendador, verificarEEnviarAniversarios } from './services/scheduler';
 import { createWhatsAppClient } from './services/whatsapp';
 import { logger } from './lib/logger';
+import { promptsRouter } from './routes/prompts';
 
 const app = express();
 const client = createWhatsAppClient();
@@ -21,6 +22,7 @@ app.use(cors({
 
 app.use(express.json());
 app.use('/api/mensagens', createMessagesRouter(client));
+app.use('/api/prompts', promptsRouter);
 
 app.listen(port, () => {
   logger.info(`Servidor da API rodando na porta ${port}`);

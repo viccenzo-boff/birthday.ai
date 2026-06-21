@@ -4,6 +4,18 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Client } from 'whatsapp-web.js';
 import { logger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
+import { buscarOuCriarPromptAtivo } from './prompts';
+
+const CHAVE_PROMPT_ANIVERSARIO = 'GERAR_ANIVERSARIO';
+
+// Usado apenas para semear a versão 1 caso ainda não exista nenhum prompt cadastrado para essa chave.
+const PROMPT_PADRAO_ANIVERSARIO = `Escreva uma mensagem de feliz aniversário curta, amigável e respeitosa para {{nome}}.
+Instruções obrigatórias:
+1. A mensagem será enviada em um grupo de WhatsApp, mas NÃO utilize a palavra "comunidade".
+2. Utilize obrigatoriamente linguagem neutra (não utilize adjetivos com marcação de gênero, como "querido", "querida", "nosso" ou "nossa").
+3. NÃO utilize emojis de coração em hipótese alguma. Use no máximo 2 emojis neutros (como bolo, confete ou balão).
+4. Não use aspas no começo ou no final da resposta.
+5. A mensagem deve soar muito natural e humana, desejando felicidades de forma direta e educada.`;
 
 let genAI: GoogleGenerativeAI | null = null;
 
@@ -36,6 +48,11 @@ export async function verificarEEnviarAniversarios(client?: Client) {
 
     if (aniversariantesDoDia.length === 0) return;
 
+    const promptAtivo = await buscarOuCriarPromptAtivo(
+      CHAVE_PROMPT_ANIVERSARIO,
+      PROMPT_PADRAO_ANIVERSARIO
+    );
+
     const model = getGeminiModel();
     let novasMensagens = 0;
 
@@ -59,18 +76,13 @@ export async function verificarEEnviarAniversarios(client?: Client) {
 
       logger.info(`Gerando mensagem para o ID ${pessoa.id}...`);
       const nomeFinal = pessoa.apelido || pessoa.nome;
-      const prompt = `Escreva uma mensagem de feliz aniversário curta, amigável e respeitosa para ${nomeFinal}. 
-Instruções obrigatórias:
-1. A mensagem será enviada em um grupo de WhatsApp, mas NÃO utilize a palavra "comunidade".
-2. Utilize obrigatoriamente linguagem neutra (não utilize adjetivos com marcação de gênero, como "querido", "querida", "nosso" ou "nossa").
-3. NÃO utilize emojis de coração em hipótese alguma. Use no máximo 2 emojis neutros (como bolo, confete ou balão).
-4. Não use aspas no começo ou no final da resposta.
-5. A mensagem deve soar muito natural e humana, desejando felicidades de forma direta e educada.`;
+      const prompt = promptAtivo.conteudo.replace(/\{\{nome\}\}/g, nomeFinal);
 
       const result = await model.generateContent(prompt);
       await prisma.logEnvio.create({
         data: {
           aniversarianteId: pessoa.id,
+          promptId: promptAtivo.id,
           mensagemOriginal: result.response.text(),
           status: 'PENDENTE',
         },
