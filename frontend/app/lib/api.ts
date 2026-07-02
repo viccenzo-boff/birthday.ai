@@ -1,4 +1,5 @@
 import type { DeliveryLogDto } from "../types/messages";
+import type { CreatePromptPayload, PromptDto } from "../types/prompt";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -10,10 +11,18 @@ function buildMessagesUrl(path = "") {
   return `${API_BASE_URL}/api/mensagens${path}`;
 }
 
-async function request<T>(path = "", init?: RequestInit): Promise<T> {
+function buildPromptsUrl(path = "") {
+  if (!API_BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_URL nao configurada.");
+  }
+
+  return `${API_BASE_URL}/api/prompts${path}`;
+}
+
+async function performRequest<T>(url: string, init?: RequestInit): Promise<T> {
   // 1. Criamos um novo objeto de cabeçalhos baseado nos originais (caso existam)
   const customHeaders = new Headers(init?.headers);
-  
+
   // 2. Injetamos a "Chave Mestra" para ignorar a página de aviso do Ngrok
   customHeaders.set("ngrok-skip-browser-warning", "true");
 
@@ -23,13 +32,21 @@ async function request<T>(path = "", init?: RequestInit): Promise<T> {
     headers: customHeaders,
   };
 
-  const response = await fetch(buildMessagesUrl(path), customInit);
+  const response = await fetch(url, customInit);
 
   if (!response.ok) {
     throw new Error(`Request failed with status ${response.status}`);
   }
 
   return response.json() as Promise<T>;
+}
+
+function request<T>(path = "", init?: RequestInit): Promise<T> {
+  return performRequest<T>(buildMessagesUrl(path), init);
+}
+
+function requestPrompts<T>(path = "", init?: RequestInit): Promise<T> {
+  return performRequest<T>(buildPromptsUrl(path), init);
 }
 
 async function sendAction(path: string, init?: RequestInit) {
@@ -53,5 +70,21 @@ export function editMessage(id: string, novoTexto: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ novoTexto }),
+  });
+}
+
+export function fetchActivePrompt(chave: string) {
+  return requestPrompts<PromptDto>(`/ativo/${encodeURIComponent(chave)}`);
+}
+
+export function fetchPromptHistory() {
+  return requestPrompts<PromptDto[]>();
+}
+
+export function createPromptVersion(payload: CreatePromptPayload) {
+  return requestPrompts<PromptDto>("", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }

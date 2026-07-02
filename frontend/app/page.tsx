@@ -1,11 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createClient } from "@/utils/supabase/client";
 import { EmptyState } from "./components/EmptyState";
 import { HistoryCard } from "./components/HistoryCard";
 import { Metric } from "./components/Metric";
 import { PendingCard } from "./components/PendingCard";
-import { approveMessage, editMessage, fetchMessages, rejectMessage } from "./lib/api";
+import { Toast, type ToastState } from "./components/Toast";
+import { UserMenu } from "./components/UserMenu";
+import {
+  approveMessage,
+  createPromptVersion,
+  editMessage,
+  fetchActivePrompt,
+  fetchMessages,
+  fetchPromptHistory,
+  rejectMessage,
+} from "./lib/api";
 import {
   convertBrazilianDateToInputDate,
   isHistoryItem,
@@ -13,72 +24,24 @@ import {
   toDashboardMessage,
 } from "./lib/messages";
 import type { HistoryItem, PendingMessage } from "./types/messages";
+import type { PromptDto } from "./types/prompt";
 
 type Section = "approval" | "prompt";
-type ToastVariant = "success" | "warning";
 
-interface PromptVersion {
-  id: number;
-  createdAt: string;
-  createdDate: string;
-  label: string;
-  content: string;
-  origin: string;
-}
-
-interface ToastState {
-  id: number;
-  message: string;
-  variant: ToastVariant;
-}
+const PROMPT_CHAVE = "GERAR_ANIVERSARIO";
 
 const itemsPerPageOptions = [5, 10, 25];
 const promptHistoryPageSizeOptions = [4, 8, 12];
 const apiErrorMessage =
   "Nao foi possivel conectar a API. Verifique se o backend esta rodando e tente novamente.";
-
-const initialPrompt = `Crie uma mensagem curta, acolhedora e profissional de aniversário para a pessoa informada.
-
-Use o nome da pessoa de forma natural.
-Evite exageros, frases genéricas demais e textos muito longos.
-Finalize com um tom positivo e humano.`;
-
-const initialVersions: PromptVersion[] = [
-  {
-    id: 3,
-    createdAt: "18/06/2026 14:32",
-    createdDate: "2026-06-18",
-    label: "Versão ativa",
-    origin: "Salva manualmente",
-    content: initialPrompt,
-  },
-  {
-    id: 2,
-    createdAt: "17/06/2026 09:18",
-    createdDate: "2026-06-17",
-    label: "Ajuste de tom",
-    origin: "Salva manualmente",
-    content: `Crie uma mensagem de aniversário em português brasileiro.
-
-Use linguagem carinhosa, mas sem soar exagerada.
-Inclua o nome da pessoa e deseje um novo ciclo leve, feliz e especial.`,
-  },
-  {
-    id: 1,
-    createdAt: "15/06/2026 16:05",
-    createdDate: "2026-06-15",
-    label: "Primeira versão",
-    origin: "Configuração inicial",
-    content: `Gere uma mensagem de feliz aniversário para o aniversariante.
-
-A mensagem deve ser educada, positiva e adequada para envio em grupo de WhatsApp.`,
-  },
-];
+const promptApiErrorMessage =
+  "Nao foi possivel carregar os prompts. Verifique se o backend esta rodando e tente novamente.";
 
 const previewMessage =
   "Feliz aniversário, teste! Que seu novo ciclo seja leve, feliz e cheio de boas notícias. Todos aqui desejam um dia especial e momentos que façam você sorrir.";
 
 export default function Home() {
+  const [supabase] = useState(() => createClient());
   const [section, setSection] = useState<Section>("approval");
   const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -89,13 +52,17 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(5);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState(initialPrompt);
-  const [versions, setVersions] = useState(initialVersions);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [versions, setVersions] = useState<PromptDto[]>([]);
+  const [promptsLoading, setPromptsLoading] = useState(true);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
   const [preview, setPreview] = useState(previewMessage);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [toastProgress, setToastProgress] = useState(100);
 
-  const activeVersion = versions[0];
+  const activeVersion = versions.find((version) => version.ativo) ?? versions[0] ?? null;
 
   const loadMessages = useCallback(async () => {
     try {
@@ -110,30 +77,49 @@ export default function Home() {
     }
   }, []);
 
+  const loadPrompts = useCallback(async () => {
+    setPromptsLoading(true);
+
+    try {
+      const promptHistory = await fetchPromptHistory();
+      setVersions(promptHistory);
+      setPromptError(null);
+    } catch {
+      setPromptError(promptApiErrorMessage);
+    }
+
+    try {
+      const promptAtivo = await fetchActivePrompt(PROMPT_CHAVE);
+      setPrompt(promptAtivo.conteudo);
+    } catch {
+      // Nenhum prompt ativo cadastrado ainda para esta chave.
+    }
+
+    setPromptsLoading(false);
+  }, []);
+
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       void loadMessages();
+      void loadPrompts();
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loadMessages]);
+  }, [loadMessages, loadPrompts]);
 
   useEffect(() => {
-    if (!toast) return;
+    let isMounted = true;
 
-    const progressTimer = window.setTimeout(() => {
-      setToastProgress(0);
-    }, 50);
-
-    const dismissTimer = window.setTimeout(() => {
-      setToast(null);
-    }, 5050);
+    supabase.auth.getUser().then(({ data }) => {
+      if (isMounted) {
+        setAdminEmail(data.user?.email ?? null);
+      }
+    });
 
     return () => {
-      window.clearTimeout(progressTimer);
-      window.clearTimeout(dismissTimer);
+      isMounted = false;
     };
-  }, [toast]);
+  }, [supabase]);
 
   const stats = useMemo(
     () => ({
@@ -168,8 +154,7 @@ export default function Home() {
     totalHistoryResults === 0 ? 0 : (safeCurrentPage - 1) * itemsPerPage + 1;
   const historyEndResult = Math.min(safeCurrentPage * itemsPerPage, totalHistoryResults);
 
-  function showToast(message: string, variant: ToastVariant) {
-    setToastProgress(100);
+  function showToast(message: string, variant: ToastState["variant"]) {
     setToast({ id: Date.now(), message, variant });
   }
 
@@ -215,40 +200,51 @@ export default function Home() {
     }
   };
 
-  function saveVersion() {
-    if (!prompt.trim() || prompt.trim() === versions[0].content.trim()) {
+  async function saveVersion() {
+    if (!activeVersion) return;
+
+    if (!prompt.trim() || prompt.trim() === activeVersion.conteudo.trim()) {
       showToast("Altere o prompt antes de salvar!", "warning");
       return;
     }
 
-    const newVersion: PromptVersion = {
-      id: versions[0].id + 1,
-      createdAt: "18/06/2026 15:10",
-      createdDate: "2026-06-18",
-      label: "Nova versão",
-      origin: "Salva manualmente",
-      content: prompt,
-    };
+    setIsSavingPrompt(true);
 
-    setVersions([newVersion, ...versions]);
-    setPreview("");
-    showToast("Novo prompt salvo com sucesso!", "success");
+    try {
+      await createPromptVersion({
+        chave: PROMPT_CHAVE,
+        conteudo: prompt.trim(),
+        criadoPor: adminEmail ?? "desconhecido",
+      });
+
+      await loadPrompts();
+      setPreview("");
+      showToast("Novo prompt salvo com sucesso!", "success");
+    } catch {
+      showToast("Nao foi possivel salvar a nova versao do prompt.", "warning");
+    } finally {
+      setIsSavingPrompt(false);
+    }
   }
 
-  function restoreVersion(version: PromptVersion) {
-    const restoredVersion: PromptVersion = {
-      id: versions[0].id + 1,
-      createdAt: "18/06/2026 15:12",
-      createdDate: "2026-06-18",
-      label: `Restaurada da versão ${version.id}`,
-      origin: "Restauração",
-      content: version.content,
-    };
+  async function restoreVersion(version: PromptDto) {
+    setRestoringVersionId(version.id);
 
-    setPrompt(version.content);
-    setVersions([restoredVersion, ...versions]);
-    setPreview("");
-    showToast("Prompt restaurado com sucesso!", "success");
+    try {
+      await createPromptVersion({
+        chave: PROMPT_CHAVE,
+        conteudo: version.conteudo,
+        criadoPor: adminEmail ?? "desconhecido",
+      });
+
+      await loadPrompts();
+      setPreview("");
+      showToast("Prompt restaurado com sucesso!", "success");
+    } catch {
+      showToast("Nao foi possivel restaurar esta versao do prompt.", "warning");
+    } finally {
+      setRestoringVersionId(null);
+    }
   }
 
   function generatePreview() {
@@ -334,17 +330,23 @@ export default function Home() {
 
         <section className="min-w-0">
           <header className="border-b border-slate-200 bg-white">
-            <div className="mx-auto flex max-w-7xl flex-col gap-5 px-6 py-6 xl:flex-row xl:items-center xl:justify-between">
-              <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
-                {section === "approval" ? "Painel de Aprovação" : "Configuração do Prompt"}
-              </h1>
+            <div className="mx-auto flex max-w-7xl flex-col gap-5 px-6 py-6">
+              <div className="flex items-center justify-between gap-4">
+                <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
+                  {section === "approval" ? "Painel de Aprovação" : "Configuração do Prompt"}
+                </h1>
 
-              <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <Metric label="Pendentes" value={pendingMessages.length} />
-                <Metric label="Enviadas" value={stats.sent} />
-                <Metric label="Editadas" value={stats.edited} />
-                <Metric label="Reprovadas" value={stats.rejected} />
+                <UserMenu />
               </div>
+
+              {section === "approval" ? (
+                <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 xl:w-fit">
+                  <Metric label="Pendentes" value={pendingMessages.length} />
+                  <Metric label="Enviadas" value={stats.sent} />
+                  <Metric label="Editadas" value={stats.edited} />
+                  <Metric label="Reprovadas" value={stats.rejected} />
+                </div>
+              ) : null}
             </div>
           </header>
 
@@ -380,10 +382,14 @@ export default function Home() {
 
           {section === "prompt" ? (
             <PromptPanel
+              promptError={promptError}
               activeVersion={activeVersion}
               prompt={prompt}
               preview={preview}
               versions={versions}
+              isLoading={promptsLoading}
+              isSaving={isSavingPrompt}
+              restoringVersionId={restoringVersionId}
               onPromptChange={setPrompt}
               onSaveVersion={saveVersion}
               onRestoreVersion={restoreVersion}
@@ -397,7 +403,6 @@ export default function Home() {
         <Toast
           key={toast.id}
           message={toast.message}
-          progress={toastProgress}
           variant={toast.variant}
           onClose={() => setToast(null)}
         />
@@ -613,21 +618,29 @@ function ApprovalPanel({
 }
 
 interface PromptPanelProps {
-  activeVersion: PromptVersion;
+  promptError: string | null;
+  activeVersion: PromptDto | null;
   prompt: string;
   preview: string;
-  versions: PromptVersion[];
+  versions: PromptDto[];
+  isLoading: boolean;
+  isSaving: boolean;
+  restoringVersionId: string | null;
   onPromptChange: (value: string) => void;
   onSaveVersion: () => void;
-  onRestoreVersion: (version: PromptVersion) => void;
+  onRestoreVersion: (version: PromptDto) => void;
   onGeneratePreview: () => void;
 }
 
 function PromptPanel({
+  promptError,
   activeVersion,
   prompt,
   preview,
   versions,
+  isLoading,
+  isSaving,
+  restoringVersionId,
   onPromptChange,
   onSaveVersion,
   onRestoreVersion,
@@ -637,14 +650,19 @@ function PromptPanel({
   const [historyDate, setHistoryDate] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(4);
-  const hasPromptChanges = prompt.trim().length > 0 && prompt.trim() !== activeVersion.content.trim();
+  const isActionInProgress = isSaving || restoringVersionId !== null;
+  const hasPromptChanges =
+    !isLoading &&
+    activeVersion !== null &&
+    prompt.trim().length > 0 &&
+    prompt.trim() !== activeVersion.conteudo.trim();
 
   const filteredVersions = useMemo(() => {
     const normalizedSearch = historySearch.trim().toLowerCase();
 
     return versions.filter((version) => {
-      const matchesMessage = version.content.toLowerCase().includes(normalizedSearch);
-      const matchesDate = historyDate ? version.createdDate === historyDate : true;
+      const matchesMessage = version.conteudo.toLowerCase().includes(normalizedSearch);
+      const matchesDate = historyDate ? version.criadoEm.slice(0, 10) === historyDate : true;
 
       return matchesMessage && matchesDate;
     });
@@ -684,53 +702,75 @@ function PromptPanel({
   }
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-6 px-6 py-8 xl:grid-cols-[minmax(0,1fr)_420px]">
-      <section className="space-y-6">
-        <div className="rounded-lg border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 p-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-950">Prompt Atual</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Ativo desde {activeVersion.createdAt}
-                </p>
-              </div>
-              <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                {activeVersion.label}
-              </span>
-            </div>
-          </div>
-
-          <div className="p-5">
-            <textarea
-              value={prompt}
-              onChange={(event) => onPromptChange(event.target.value)}
-              className="min-h-72 w-full resize-y rounded-md border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
-            />
-
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={onGeneratePreview}
-                className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Gerar prévia
-              </button>
-              <button
-                type="button"
-                onClick={onSaveVersion}
-                aria-disabled={!hasPromptChanges}
-                className={`inline-flex min-h-11 items-center justify-center rounded-md px-5 text-sm font-semibold text-white transition ${
-                  hasPromptChanges
-                    ? "bg-slate-950 hover:bg-slate-800"
-                    : "bg-slate-500 hover:bg-slate-600"
-                }`}
-              >
-                Salvar nova versão
-              </button>
-            </div>
+    <>
+      {promptError ? (
+        <div className="mx-auto mt-6 max-w-7xl px-6">
+          <div
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800"
+          >
+            {promptError}
           </div>
         </div>
+      ) : null}
+
+      <div className="mx-auto grid max-w-7xl gap-6 px-6 py-8 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <section className="space-y-6">
+          <div className="rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-200 p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-950">Prompt Atual</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {activeVersion
+                      ? `Ativo desde ${new Date(activeVersion.criadoEm).toLocaleString("pt-BR")}`
+                      : isLoading
+                        ? "Carregando prompt ativo..."
+                        : "Nenhum prompt ativo encontrado."}
+                  </p>
+                </div>
+                {activeVersion ? (
+                  <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                    Versão ativa
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="p-5">
+              <textarea
+                value={prompt}
+                onChange={(event) => onPromptChange(event.target.value)}
+                disabled={isLoading}
+                placeholder={isLoading ? "Carregando prompt ativo..." : undefined}
+                className="min-h-72 w-full resize-y rounded-md border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+              />
+
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={onGeneratePreview}
+                  disabled={isLoading}
+                  className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-300 px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Gerar prévia
+                </button>
+                <button
+                  type="button"
+                  onClick={onSaveVersion}
+                  disabled={isLoading || isActionInProgress}
+                  aria-disabled={!hasPromptChanges || isActionInProgress}
+                  className={`inline-flex min-h-11 items-center justify-center rounded-md px-5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    hasPromptChanges && !isActionInProgress
+                      ? "bg-slate-950 hover:bg-slate-800"
+                      : "bg-slate-500 hover:bg-slate-600"
+                  }`}
+                >
+                  {isSaving ? "Salvando..." : "Salvar nova versão"}
+                </button>
+              </div>
+            </div>
+          </div>
 
         <div className="rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 p-5">
@@ -776,7 +816,11 @@ function PromptPanel({
           </div>
 
           <div className="grid gap-4 p-5 lg:grid-cols-2">
-            {paginatedVersions.length > 0 ? (
+            {isLoading ? (
+              Array.from({ length: itemsPerPage }).map((_, index) => (
+                <PromptVersionCardSkeleton key={index} />
+              ))
+            ) : paginatedVersions.length > 0 ? (
               paginatedVersions.map((version) => (
                 <article
                   key={version.id}
@@ -784,26 +828,29 @@ function PromptPanel({
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-950">{version.createdAt}</p>
+                      <p className="text-sm font-semibold text-slate-950">
+                        {new Date(version.criadoEm).toLocaleString("pt-BR")}
+                      </p>
                       <p className="mt-1 text-xs font-medium uppercase text-slate-500">
-                        {version.origin}
+                        {version.criadoPor}
                       </p>
                     </div>
                     <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-                      v{version.id}
+                      v{version.versao}
                     </span>
                   </div>
 
                   <p className="mt-4 line-clamp-4 whitespace-pre-line text-sm leading-6 text-slate-600">
-                    {version.content}
+                    {version.conteudo}
                   </p>
 
                   <button
                     type="button"
                     onClick={() => onRestoreVersion(version)}
-                    className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    disabled={isActionInProgress}
+                    className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Restaurar esta versão
+                    {restoringVersionId === version.id ? "Restaurando..." : "Restaurar esta versão"}
                   </button>
                 </article>
               ))
@@ -883,82 +930,44 @@ function PromptPanel({
           <dl className="mt-4 space-y-3 text-sm">
             <div className="flex items-center justify-between gap-4">
               <dt className="text-slate-500">Versão ativa</dt>
-              <dd className="font-semibold text-slate-950">v{activeVersion.id}</dd>
+              <dd className="font-semibold text-slate-950">
+                {activeVersion ? `v${activeVersion.versao}` : "--"}
+              </dd>
             </div>
             <div className="flex items-center justify-between gap-4">
               <dt className="text-slate-500">Versões salvas</dt>
               <dd className="font-semibold text-slate-950">{versions.length}</dd>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <dt className="text-slate-500">Último evento</dt>
-              <dd className="font-semibold text-slate-950">{activeVersion.origin}</dd>
+              <dt className="text-slate-500">Criado por</dt>
+              <dd className="font-semibold text-slate-950">{activeVersion?.criadoPor ?? "--"}</dd>
             </div>
           </dl>
         </section>
       </aside>
-    </div>
+      </div>
+    </>
   );
 }
 
-interface ToastProps {
-  message: string;
-  progress: number;
-  variant: ToastVariant;
-  onClose: () => void;
-}
-
-function Toast({ message, progress, variant, onClose }: ToastProps) {
-  const isWarning = variant === "warning";
-  const styles = isWarning
-    ? {
-        border: "border-amber-200",
-        iconBg: "bg-amber-100",
-        iconText: "text-amber-700",
-        text: "text-amber-900",
-        hover: "hover:bg-amber-50",
-        track: "bg-amber-50",
-        bar: "bg-amber-500",
-        icon: "!",
-      }
-    : {
-        border: "border-emerald-200",
-        iconBg: "bg-emerald-100",
-        iconText: "text-emerald-700",
-        text: "text-emerald-800",
-        hover: "hover:bg-emerald-50",
-        track: "bg-emerald-50",
-        bar: "bg-emerald-500",
-        icon: "✓",
-      };
-
+function PromptVersionCardSkeleton() {
   return (
-    <div
-      className={`fixed bottom-5 right-5 z-50 w-[min(360px,calc(100vw-40px))] overflow-hidden rounded-lg border bg-white shadow-lg ${styles.border}`}
-    >
-      <div className="flex items-start gap-3 p-4">
-        <div
-          className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-bold ${styles.iconBg} ${styles.iconText}`}
-        >
-          {styles.icon}
+    <div className="animate-pulse rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-2">
+          <div className="h-4 w-32 rounded bg-slate-200" />
+          <div className="h-3 w-24 rounded bg-slate-100" />
         </div>
-        <p className={`min-w-0 flex-1 text-sm font-semibold leading-6 ${styles.text}`}>
-          {message}
-        </p>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Fechar aviso"
-          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-lg leading-none transition ${styles.iconText} ${styles.hover}`}
-        >
-          ×
-        </button>
+        <div className="h-5 w-8 rounded-full bg-slate-200" />
       </div>
-      <div className={`h-1 ${styles.track}`}>
-        <div
-          className={`h-full transition-[width] duration-[5000ms] ease-linear ${styles.bar}`}
-          style={{ width: `${progress}%` }}
-        />
+
+      <div className="mt-4 space-y-2">
+        <div className="h-3 w-full rounded bg-slate-100" />
+        <div className="h-3 w-full rounded bg-slate-100" />
+        <div className="h-3 w-2/3 rounded bg-slate-100" />
       </div>
+
+      <div className="mt-4 h-10 w-full rounded-md bg-slate-100" />
     </div>
   );
 }

@@ -1,46 +1,62 @@
-import { redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
+"use client";
+
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useState } from "react";
+import { Toast, type ToastVariant } from "../components/Toast";
+import { login, type LoginActionState } from "./actions";
+
+const initialState: LoginActionState = { status: "idle" };
+const REDIRECT_DELAY_MS = 1200;
 
 export default function LoginPage() {
-  const login = async (formData: FormData) => {
-    'use server';
+  const router = useRouter();
+  const [state, formAction, isPending] = useActionState(login, initialState);
 
-    const email = formData.get('email') as string;
-    const password = formData.get('password') as string;
-    const supabase = await createClient();
+  // Reseta o fechamento manual do toast sempre que uma nova tentativa de login gera um novo estado.
+  const [prevState, setPrevState] = useState(state);
+  const [toastKey, setToastKey] = useState(0);
+  const [toastDismissed, setToastDismissed] = useState(false);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+  if (state !== prevState) {
+    setPrevState(state);
+    setToastKey((key) => key + 1);
+    setToastDismissed(false);
+  }
 
-    if (error) {
-      console.log("🔥 ERRO REAL DO SUPABASE:", error);
-      
-      // Isso vai jogar a mensagem original do banco na sua URL
-      return redirect(`/login?error=${error.message}`);
-    }
+  useEffect(() => {
+    if (state.status !== "success") return;
 
-    // Se o login for bem-sucedido, redireciona para o painel principal
-    redirect('/');
-  };
+    const redirectTimer = window.setTimeout(() => {
+      router.push("/");
+      router.refresh();
+    }, REDIRECT_DELAY_MS);
+
+    return () => window.clearTimeout(redirectTimer);
+  }, [state.status, router]);
+
+  const toastVisible = state.status !== "idle" && !toastDismissed;
+  const toastVariant: ToastVariant = state.status === "success" ? "success" : "warning";
 
   return (
     <div className="flex h-screen items-center justify-center bg-slate-50">
       <form
         className="flex flex-col gap-4 w-full max-w-md p-8 bg-white rounded-xl shadow-lg border border-slate-100"
-        action={login}
+        action={formAction}
       >
-        <div className="text-center mb-4">
-          <h1 className="text-2xl font-bold text-slate-800">Birthday.ai</h1>
-          <p className="text-sm text-slate-500">Acesso Administrativo</p>
+        <div className="flex flex-col items-center gap-2 text-center mb-4">
+          <Image src="/icon-192x192.png" alt="Birthday.ai" width={64} height={64} priority />
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">Birthday.ai</h1>
+            <p className="text-sm text-slate-500">Acesso Administrativo</p>
+          </div>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="email" className="text-sm font-semibold text-slate-700">
             E-mail
           </label>
-          <input 
+          <input
             id="email"
             name="email"
             type="email"
@@ -66,11 +82,21 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          className="bg-slate-900 text-white p-3 rounded-lg font-semibold hover:bg-slate-800 transition-colors mt-4"
+          disabled={isPending}
+          className="bg-slate-900 text-white p-3 rounded-lg font-semibold hover:bg-slate-800 transition-colors mt-4 disabled:cursor-not-allowed disabled:bg-slate-400"
         >
-          Acessar Painel
+          {isPending ? "Entrando..." : "Acessar Painel"}
         </button>
       </form>
+
+      {toastVisible && state.message ? (
+        <Toast
+          key={toastKey}
+          message={state.message}
+          variant={toastVariant}
+          onClose={() => setToastDismissed(true)}
+        />
+      ) : null}
     </div>
   );
 }
